@@ -1,13 +1,14 @@
 import numpy as np
 
 ############################
-# 1. 수분함량 계산
+# 1. 수분함량 
 ############################
 
 def compute_fmc(species_file): 
     """
     species_file: 수종 코드가 포함된 2D array
     return: 각 셀에 해당하는 FMC 값 (same shape)
+    수종별 코드 propagator에 맞춰야 함
     """
     fmc_values = np.array([
         105.8,  # 0: 강원지방소나무
@@ -33,71 +34,71 @@ def compute_fmc(species_file):
 
 def compute_csi(cbh_file, species_file): #cbh_file, species_file shape = (H, W) 
     """
-    cbh_file: NumPy 파일 경로 (CBH 값이 저장됨)
+    cbh_file: 유정 지하고 연결
     species_file: 수종 배열 (2D array)
     return: 수관화 임계강도 csi (same shape)
     """
-    CBH = np.load(cbh_file)
+    CBH = cbh_file
     FMC = compute_fmc(species_file)
     csi = 0.001 * np.power(CBH, 1.5) * np.power(460 + 25.9 * FMC, 1.5) # 0.001 확인 필요(단위 관련)
     return csi
 
 ############################
-# 3. 수관화 여부 및 ROS 계산
+# 3. 수관화 여부 및 RSO 계산
 ############################
 
 def classify_crowning(dIntensity, csi):
     """
     dIntensity > csi → 수관화 발생(1), 그렇지 않으면(0)
     """
-    dIntensity = dIntensity.astype(float) # 위 코드에서 dIntensity 연결시키기?
+    dIntensity = dIntensity.astype(float) # propagator에서 dIntensity 연결시키기?
     csi = csi.astype(float)
     crowning_mask = (dIntensity > csi).astype(np.uint8) # 수관화 발생 조건: 표면 화재 강도가 임계 강도보다 클 때 # True (1) 수관화 발생/ False (0) 수관화 미발생 #####
     return crowning_mask
 
-def compute_ros(csi, sfc):
+def compute_rso(csi, sfc):
     """
-    수관화 발생 셀의 확산속도 계산 (CSI / 300 * SFC)
+    수관화 발생 셀의 확산속도 계산 (CSI / 300 * SFC) = rso 수관화가 시작되는 임계 확산속도 (m/min)
     """
     sfc = np.asarray(sfc, dtype=float) # 이건 BUI(DMC, DC)와 FFMC로 계산 또는 이미 계산되어 있는 값 활용할지 확인 필요함
     denominator = 300.0 * sfc
 
     with np.errstate(divide='ignore', invalid='ignore'):
-        ros_all = np.where(denominator > 0, csi / denominator, 0)
+        rso_all = np.where(denominator > 0, csi / denominator, 0)
 
-    return ros_all
+    return rso_all
 
-def compute_masked_ros(dIntensity, csi, sfc):
+def compute_masked_rso(dIntensity, csi, sfc):
     """
-    수관화 발생 셀에 대해서만 ros 계산
+    수관화 발생 셀에 대해서만 rso 계산
     """
     crowning_mask = classify_crowning(dIntensity, csi)
-    ros_all = compute_ros(csi, sfc)
-    ros_masked = np.where(crowning_mask == 1, ros_all, 0)
-    return ros_masked, crowning_mask
+    rso_all = compute_rso(csi, sfc)
+    rso_masked = np.where(crowning_mask == 1, rso_all, 0)
+    return rso_masked, crowning_mask
 
 ############################
 # 4. 수관 연소 분율 및 유형
 ############################
 
-def compute_cfb(ros_masked, rso, crowning_mask):
+def compute_cfb(rso_masked, ros, crowning_mask):
     """
-    ros_masked: 수관화 셀에 대해 계산된 ros
-    rso: 수관화 임계속도
+    rso_masked: 수관화 셀에 대해 계산된 rso
+    ros: 예측된 산불확산 속도(m/min)
     crowning_mask: 수관화 마스크 (0/1)
     return:
         cfb: 수관 연소 분율 (0~1)
-        crowning_type: 'active', 'partial', 'none'
+        crowning_type: 'active', 'partial'
     """
-    ros = np.asarray(ros_masked, dtype=float)
-    rso = np.asarray(rso, dtype=float) # 위 코드에서 ROS_0 연결시키기?
+    rso = np.asarray(rso_masked, dtype=float)
+    ros = np.asarray(ros, dtype=float) # propagator 코드에서 ROS_0 연결시키기?
 
     delta = ros - rso
     cfb = 1.0 - np.exp(-0.23 * delta)
     cfb = np.clip(cfb, 0, 1)
 
     crowning_type = np.full_like(cfb, fill_value='none', dtype=object)
-    crowning_type[(crowning_mask == 1) & (cfb >= 0.9)] = 'active'
+    crowning_type[(crowning_mask == 1) & (cfb >= 0.9)] = 'active' # 0.9 확인 필요 # CFB가 1에 가까워지면 전체 수관화 # ROS와 RSO 유사하면 CFB 낮아져 부분 수관화
     crowning_type[(crowning_mask == 1) & (cfb < 0.9)] = 'partial'
 
     return cfb, crowning_type

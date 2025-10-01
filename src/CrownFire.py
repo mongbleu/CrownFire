@@ -197,40 +197,49 @@ class CrownFire:
         plt.title(f"{title}")
         plt.colorbar(img, ax=ax, label=f"{unit}")
         plt.show()
+        
+    ############################
+    # 6. Run Crownfire Prediction
+    ############################ 
+    def run (imsang_arr, cbh_arr, dIntensity, sfc, ros):
+        # verify the shape
+        assert np.shape(imsang_arr) == np.shape(cbh_arr), f"The shape of imsang({np.shape(imsang_arr)}) and CBH({np.shape(cbh_arr)}) requires to be identical."
 
-# =====  수관화 예측 실행 코드 =====
-# Need to be functionized (function: run_crownfire)
-# Boundary 설정을 위한 변수 준비
-patch_size = 128
-stride = 18
-resolution = 5.
-long = 128.820
-lat = 36.362
-if (lat < 360) or (lon < 360):
-        lat_kor, lon_kor = coord_conv(np.array([lat,long]), 4326, 5179)
-    
-# 이전 시점 화선경계(previous_burn)가 없을 경우, boundary 설정 함수 사용
-expand = 0.000001
-burned = shapely.geometry.Point(lon_kor,lat_kor).buffer(zsexpand)
-boundary = get_aoi(burned=burned, patch_size=patch_size, stride=stride, resolution=resolution, center_ignition=[lon_kor, lat_kor])
-cbh_tif = r"F:\CBH\Clip_HEIGHT_sampled.tif" # r"F:\CBH\result\CBH_meter.tif" #
-imsang = r"F:\ForestFire\Imsang_merge.gdb"
-imsang_arr = load_ftype(boundary, imsang, "KOFTR_GROU") # int
-cbh_arr = load_raster(boundary, cbh_tif) # float, meter 
-# pseudo data
-dIntensity = np.random.uniform(2000, 80000, size=cbh_arr.size).reshape(np.shape(cbh_arr)) # float, kW/m # 지표화 코드로부터 넘어오는 값
-sfc = np.full_like(cbh_arr, 7.1) # float, kg/m2 # 산과원 자료(영급-경급 코드 매칭)으로 수종별 지표층 연료량 계산 가능
-ros = np.random.uniform(0.5, 20, size=cbh_arr.size).reshape(np.shape(cbh_arr))
+        self.compute_fmc(imsang_arr) 
+        csi = self.compute_csi(cbh_arr)
+        self.classify_crowning(dIntensity)
+        # 모든 픽셀에 대한 ROS 계산 시,
+        rso_all =self.compute_rso(sfc)
+        # 수관화 발생(1) 픽셀에서만 ROS 계산 시,
+        ros_real = self.compute_masked_rso(dIntensity, sfc)
+        cfb, crowning_type = cf.compute_cfb(ros) # rso_real
 
-# verify the shape
-assert np.shape(imsang_arr) == np.shape(cbh_arr), f"The shape of imsang({np.shape(imsang_arr)}) and 
+if __name__ == "__main__":
+    # ==== Propgation 내에서 전달받는 변수들 ====
+    patch_size = 128
+    stride = 18
+    resolution = 5.
+    long = 128.820
+    lat = 36.362
+    if (lat < 360) or (lon < 360):
+            lat_kor, lon_kor = coord_conv(np.array([lat,long]), 4326, 5179)
+    # Boundary 설정을 위한 변수 준비
+    # 이전 시점 화선경계(previous_burn)가 없을 경우, boundary 설정 함수 사용
+    expand = 0.000001
+    burned = shapely.geometry.Point(lon_kor,lat_kor).buffer(zsexpand)
+    boundary = get_aoi(burned=burned, patch_size=patch_size, stride=stride, resolution=resolution, center_ignition=[lon_kor, lat_kor])
 
-cf = CrownFire()
-cf.compute_fmc(imsang_arr) 
-csi = cf.compute_csi(cbh_arr)
-cf.classify_crowning(dIntensity)
-# 모든 픽셀에 대한 ROS 계산 시,
-rso_all = cf.compute_rso(sfc)
-# 수관화 발생(1) 픽셀에서만 ROS 계산 시,
-ros_real = cf.compute_masked_rso(dIntensity, sfc)
-cfb, crowning_type = cf.compute_cfb(ros) # rso_real
+    # ==== Propgation 지표화 예측 결과 중 사용하는 것들 ====
+    dIntensity = np.random.uniform(2000, 80000, size=cbh_arr.size).reshape(np.shape(cbh_arr)) # float, kW/m # 지표화 코드로부터 넘어오는 값
+    ros = np.random.uniform(0.5, 20, size=cbh_arr.size).reshape(np.shape(cbh_arr))
+
+    # ==== 수관화 예측을 위한 데이터 준비 ====
+    cbh_tif = r"F:\CBH\Clip_HEIGHT_sampled.tif" # r"F:\CBH\result\CBH_meter.tif" #
+    imsang = r"F:\ForestFire\Imsang_merge.gdb"
+    imsang_arr = load_ftype(boundary, imsang, "KOFTR_GROU") # int
+    cbh_arr = load_raster(boundary, cbh_tif) # float, meter
+    sfc = np.full_like(cbh_arr, 7.1) # float, kg/m2 # 산과원 자료(영급-경급 코드 매칭)으로 수종별 지표층 연료량 계산 가능
+
+    # ===== 수관화 예측 실행 ====
+    cf = CrownFire()
+    cf.run(imsang_arr, cbh_arr, dIntensity, sfc, ros)
